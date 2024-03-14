@@ -1,6 +1,8 @@
+import math
 import numpy as np
 import onnx
 import pandas as pd
+import pprint
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -32,21 +34,84 @@ config = dict(
     num_features = D,
     epochs = 20,
     classes = C,
-    batch_size = 128,
-    learning_rate = 0.001,
-    hidden_size=128,
+    batch_size = 120,
+    learning_rate = 0.075,
+    hidden_size=10,
+    optimizer='sgd',
     dataset="task1_topics")
+
+sweep_config = {
+    'method': 'random'
+    }
+
+metric = {
+    'name': 'loss',
+    'goal': 'minimize'   
+    }
+
+sweep_config['metric'] = metric
+
+parameters_dict = {
+    'optimizer': {
+        'values': ['adam', 'sgd']
+        }
+    # 'hidden_size': {
+    #     'values': [128, 256, 512]
+    #     }
+    }
+
+parameters_dict.update({
+    'epochs': {
+        'value': 16}
+    ,
+    'n_train': {
+        'value': int(N_TRAIN)},
+    'n_dev': {
+        'value': int(N_DEV)},
+    'num_features': {
+        'value': int(D)},
+    'classes': {
+        'value': int(C)},
+    'hidden_size': {
+        'values': [5,10,15]}
+    })
+
+parameters_dict.update({
+    'learning_rate': {
+        # a flat distribution between 0 and 0.1
+        'distribution': 'uniform',
+        'min': 0,
+        'max': 0.1
+    },
+    'batch_size': {
+        # integers between 32 and 256
+        # with evenly-distributed logarithms 
+        'distribution': 'q_log_uniform_values',
+        'q': 8,
+        'min': 32,
+        'max': 256,
+    }
+    })
+
+sweep_config['parameters'] = parameters_dict
+
+pprint.pprint(sweep_config)
+
+sweep_id = wandb.sweep(sweep_config, project="pytorch-sweeps-single")
 
 class NeuralNet(nn.Module):
     def __init__(self, input_size, hidden_size, num_classes):
         super(NeuralNet, self).__init__()
         self.l1 = nn.Linear(input_size,hidden_size)
-        self.relu = nn.ReLU()
+        # self.relu = nn.ReLU()
+        #self.leaky_relu = nn.LeakyReLU()
+        
+        self.sigmoid = nn.Sigmoid()
         self.l2 = nn.Linear(hidden_size, num_classes)
     
     def forward(self,x):
         out = self.l1(x)
-        out = self.relu(out)
+        out = self.sigmoid(out)
         out = self.l2(out)
         
         return out
@@ -68,7 +133,7 @@ class SparseCatDataset(Dataset):
         label = self.labels[index]
         return sample, label
 
-def model_pipeline(hyperparams):
+def model_pipeline(hyperparams=None):
     
     with wandb.init(project="single-perceptron-model", config=hyperparams):
         config = wandb.config
@@ -84,7 +149,7 @@ def model_pipeline(hyperparams):
 def make(config):
     # get data
     # train, test = get_data("task1_topics/train.sparseX","task1_topics/train.CT",config.n_train,config.num_features), get_data("task1_topics/dev.sparseX","task1_topics/dev.CT",config.n_dev,config.num_features)
-    train, test = get_data("task1_topics/train.sparseX","task1_topics/train.CT",config.n_train,config.num_features,max_slice=(config.n_train/2)), get_data("task1_topics/train.sparseX","task1_topics/train.CT",config.n_train,config.num_features,min_slice=(config.n_train/2))
+    train, test = get_data("task1_topics/train.sparseX","task1_topics/train.CT",config.n_train,config.num_features,slice=2), get_data("task1_topics/dev.sparseX","task1_topics/dev.CT",config.n_train,config.num_features,slice=2)
     train_loader = make_loader(train, batch_size=config.batch_size)
     test_loader = make_loader(test, batch_size=config.batch_size)
     
@@ -93,7 +158,10 @@ def make(config):
     
     # generate loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    if config.optimizer == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    elif config.optimizer == 'sgd':
+        optimizer = torch.optim.SGD(model.parameters(), lr=config.learning_rate)
     
     return model, train_loader, test_loader, criterion, optimizer
 
@@ -187,7 +255,8 @@ def test(model, test_loader):
     # save the model in ONNX format
     torch.onnx.export(model, samples, "model.onnx")
     wandb.save("model.onnx")
-    
+
+# wandb.agent(sweep_id, model_pipeline, count=5) 
 model = model_pipeline(config)
     
     

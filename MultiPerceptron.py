@@ -30,12 +30,12 @@ config = dict(
     n_train = N_TRAIN,
     n_dev = N_DEV,
     num_features = D,
-    epochs = 20,
+    epochs = 25,
     classes = C,
-    batch_size = 128,
-    learning_rate = 0.001,
-    hidden_size=128,
-    num_hidden_layers=5,
+    batch_size = 512,
+    learning_rate = 0.01,
+    hidden_size=15,
+    num_hidden_layers=10,
     dataset="task1_topics")
 
 class NeuralNet(nn.Module):
@@ -99,7 +99,7 @@ def make(config):
     
     # generate loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    optimizer = torch.optim.SGD(model.parameters(), lr=config.learning_rate)
     
     return model, train_loader, test_loader, criterion, optimizer
 

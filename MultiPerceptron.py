@@ -32,10 +32,10 @@ config = dict(
     num_features = D,
     epochs = 25,
     classes = C,
-    batch_size = 512,
-    learning_rate = 0.01,
-    hidden_size=15,
-    num_hidden_layers=10,
+    batch_size = 200,
+    learning_rate = 0.08,
+    hidden_size=32,
+    num_hidden_layers=5,
     dataset="task1_topics")
 
 class NeuralNet(nn.Module):
@@ -111,11 +111,13 @@ def get_data(features_file, labels_file, N, D, slice=5):
     labels = torch.tensor(labels)
     
     # convert sparse data into indices and values
-    indices = torch.tensor([[entry[0], entry[1]] for entry in features], dtype=torch.long).t()
-    values = torch.tensor([entry[2] for entry in features], dtype=torch.float)
+    # indices = torch.tensor([[entry[0], entry[1]] for entry in features], dtype=torch.long).t()
+    # values = torch.tensor([entry[2] for entry in features], dtype=torch.float)
+    indices = features[:, :2].to(torch.long).t()
+    values = features[:, 2].to(torch.float)
     
     # create a sparse tensor
-    sparse_features = torch.sparse.FloatTensor(indices, values, torch.Size([N, D]))
+    sparse_features = torch.sparse_coo_tensor(indices, values, torch.Size([N, D]))
     
     # convert sparse tensor to dense tensor
     dense_tensor = sparse_features.to_dense()

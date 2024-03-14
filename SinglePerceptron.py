@@ -5,6 +5,7 @@ import pandas as pd
 import pprint
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import torchvision
 import torchvision.transforms as transforms
@@ -34,19 +35,19 @@ config = dict(
     num_features = D,
     epochs = 20,
     classes = C,
-    batch_size = 120,
-    learning_rate = 0.075,
-    hidden_size=10,
+    batch_size = 140,
+    learning_rate = 0.085,
+    hidden_size=15,
     optimizer='sgd',
     dataset="task1_topics")
 
 sweep_config = {
-    'method': 'random'
+    'method': 'bayes'
     }
 
 metric = {
-    'name': 'loss',
-    'goal': 'minimize'   
+    'name': 'test_accuracy',
+    'goal': 'maximize'   
     }
 
 sweep_config['metric'] = metric
@@ -54,10 +55,10 @@ sweep_config['metric'] = metric
 parameters_dict = {
     'optimizer': {
         'values': ['adam', 'sgd']
+        },
+    'hidden_size': {
+        'values': [8,12,16,24,32]
         }
-    # 'hidden_size': {
-    #     'values': [128, 256, 512]
-    #     }
     }
 
 parameters_dict.update({
@@ -71,9 +72,9 @@ parameters_dict.update({
     'num_features': {
         'value': int(D)},
     'classes': {
-        'value': int(C)},
-    'hidden_size': {
-        'values': [5,10,15]}
+        'value': int(C)}
+    # 'hidden_size': {
+    #     'values': [5,10,15]}
     })
 
 parameters_dict.update({
@@ -88,8 +89,8 @@ parameters_dict.update({
         # with evenly-distributed logarithms 
         'distribution': 'q_log_uniform_values',
         'q': 8,
-        'min': 32,
-        'max': 256,
+        'min': 128,
+        'max': 512,
     }
     })
 
@@ -97,13 +98,13 @@ sweep_config['parameters'] = parameters_dict
 
 pprint.pprint(sweep_config)
 
-sweep_id = wandb.sweep(sweep_config, project="pytorch-sweeps-single")
+sweep_id = wandb.sweep(sweep_config, project="pytorch-sweeps-single-2")
 
 class NeuralNet(nn.Module):
     def __init__(self, input_size, hidden_size, num_classes):
         super(NeuralNet, self).__init__()
         self.l1 = nn.Linear(input_size,hidden_size)
-        # self.relu = nn.ReLU()
+        self.relu = nn.ReLU()
         #self.leaky_relu = nn.LeakyReLU()
         
         self.sigmoid = nn.Sigmoid()
@@ -111,7 +112,7 @@ class NeuralNet(nn.Module):
     
     def forward(self,x):
         out = self.l1(x)
-        out = self.sigmoid(out)
+        out = self.relu(out)
         out = self.l2(out)
         
         return out
@@ -135,7 +136,7 @@ class SparseCatDataset(Dataset):
 
 def model_pipeline(hyperparams=None):
     
-    with wandb.init(project="single-perceptron-model", config=hyperparams):
+    with wandb.init(project="single-perceptron-model-final-run", config=hyperparams):
         config = wandb.config
         
         model, train_loader, test_loader, criterion, optimizer = make(config)
@@ -149,7 +150,7 @@ def model_pipeline(hyperparams=None):
 def make(config):
     # get data
     # train, test = get_data("task1_topics/train.sparseX","task1_topics/train.CT",config.n_train,config.num_features), get_data("task1_topics/dev.sparseX","task1_topics/dev.CT",config.n_dev,config.num_features)
-    train, test = get_data("task1_topics/train.sparseX","task1_topics/train.CT",config.n_train,config.num_features,slice=2), get_data("task1_topics/dev.sparseX","task1_topics/dev.CT",config.n_train,config.num_features,slice=2)
+    train, test = get_data("task1_topics/train.sparseX","task1_topics/train.CT",config.n_train,config.num_features), get_data("task1_topics/dev.sparseX","task1_topics/dev.CT",config.n_train,config.num_features)
     train_loader = make_loader(train, batch_size=config.batch_size)
     test_loader = make_loader(test, batch_size=config.batch_size)
     
@@ -165,7 +166,7 @@ def make(config):
     
     return model, train_loader, test_loader, criterion, optimizer
 
-def get_data(features_file, labels_file, N, D, min_slice=0, max_slice=None, slice=5):
+def get_data(features_file, labels_file, N, D, min_slice=0, max_slice=None, slice=1):
     
     features = np.loadtxt(features_file, dtype=np.int64)
     labels = np.loadtxt(labels_file, dtype=np.int64)
@@ -174,16 +175,20 @@ def get_data(features_file, labels_file, N, D, min_slice=0, max_slice=None, slic
     labels = torch.tensor(labels)
     
     # convert sparse data into indices and values
-    indices = torch.tensor([[entry[0], entry[1]] for entry in features], dtype=torch.long).t()
-    values = torch.tensor([entry[2] for entry in features], dtype=torch.float)
+    # indices = torch.tensor([[entry[0], entry[1]] for entry in features], dtype=torch.long).t()
+    # values = torch.tensor([entry[2] for entry in features], dtype=torch.float)
+    indices = features[:, :2].to(torch.long).t()
+    values = features[:, 2].to(torch.float)
     
     # create a sparse tensor
-    sparse_features = torch.sparse.FloatTensor(indices, values, torch.Size([N, D]))
+    sparse_features = torch.sparse_coo_tensor(indices, values, torch.Size([N, D]))
     
     # convert sparse tensor to dense tensor
     dense_tensor = sparse_features.to_dense()
     
-    dataset = SparseCatDataset(dense_tensor,labels)
+    normalized_data = F.normalize(dense_tensor, p=2, dim=1)
+    
+    dataset = SparseCatDataset(normalized_data,labels)
     
     if max_slice is None: 
         max_slice = len(dataset)
@@ -256,7 +261,7 @@ def test(model, test_loader):
     torch.onnx.export(model, samples, "model.onnx")
     wandb.save("model.onnx")
 
-# wandb.agent(sweep_id, model_pipeline, count=5) 
+#wandb.agent(sweep_id, model_pipeline, count=20) 
 model = model_pipeline(config)
     
     
